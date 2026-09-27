@@ -2,6 +2,17 @@ const bcrypt = require('bcrypt');
 const jwt    = require('jsonwebtoken');
 const db     = require('../config/database');
 const { AppError } = require('../utils/AppError');
+const { logger } = require('../utils/logger');
+
+// Wrap non-operational (unexpected) errors with request context so the
+// error middleware logs a useful line instead of a generic 500.
+const withContext = (err, req, context) => {
+  if (err && !err.isOperational) {
+    err.message = `[${context}] ${err.message}`;
+    err.loginContext = context;
+  }
+  return err;
+};
 
 // ─── POST /api/auth/login  (employee) ────────────────────────
 const employeeLogin = async (req, res, next) => {
@@ -23,6 +34,7 @@ const employeeLogin = async (req, res, next) => {
     const ok  = await bcrypt.compare(password, emp.password_hash);
     if (!ok) throw new AppError('INVALID_CREDENTIALS', 'Invalid credentials.', 401);
 
+
     const token = jwt.sign(
       { employee_id: emp.employee_id, name: emp.full_name, type: 'employee' },
       process.env.JWT_SECRET,
@@ -31,7 +43,7 @@ const employeeLogin = async (req, res, next) => {
 
     const { password_hash, ...safe } = emp;
     return res.json({ success: true, token, employee: safe });
-  } catch (err) { next(err); }
+  } catch (err) { next(withContext(err, req, 'employeeLogin')); }
 };
 
 // ─── POST /api/auth/admin/login ───────────────────────────────
@@ -52,7 +64,13 @@ const adminLogin = async (req, res, next) => {
     if (!await bcrypt.compare(password, admin.password_hash))
       throw new AppError('INVALID_CREDENTIALS', 'Invalid credentials.', 401);
 
-    await db.query('UPDATE admins SET last_login_at = NOW() WHERE id = $1', [admin.id]);
+    // Audit update only — never block a successful login if the column is
+    // missing (older schema) or the connection drops mid-request.
+    try {
+      await db.query('UPDATE admins SET last_login_at = NOW() WHERE id = $1', [admin.id]);
+    } catch (auditErr) {
+      logger.error(`[adminLogin] last_login_at update failed for admin ${admin.id}: ${auditErr.message}`);
+    }
 
     const token = jwt.sign(
       { id: admin.id, name: admin.name, email: admin.email, role: admin.role, type: 'admin' },
@@ -62,7 +80,7 @@ const adminLogin = async (req, res, next) => {
 
     const { password_hash, ...safe } = admin;
     return res.json({ success: true, token, admin: safe });
-  } catch (err) { next(err); }
+  } catch (err) { next(withContext(err, req, 'adminLogin')); }
 };
 
 // ─── POST /api/auth/register  (admin creates employee) ───────

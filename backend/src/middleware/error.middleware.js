@@ -9,12 +9,15 @@ const errorHandler = (err, req, res, next) => {
       ...err.extra,
     });
   }
-  logger.error(`Unhandled: ${err.stack}`);
+  logger.error(`Unhandled: ${err.stack || err.message}`);
+  // Surface the real reason in the response while debugging (also sent when
+  // NODE_ENV is unset, which is common on fresh deployments).
+  const isProd = process.env.NODE_ENV === 'production';
   return res.status(500).json({
     success: false,
     error:   'INTERNAL_ERROR',
-    message: process.env.NODE_ENV !== 'production' ? err.message : 'An unexpected error occurred.',
-    ...(process.env.NODE_ENV !== 'production' && { stack: err.stack }),
+    message: !isProd ? err.message : 'An unexpected error occurred.',
+    ...(!isProd && { stack: err.stack }),
   });
 };
 
