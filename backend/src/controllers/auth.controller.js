@@ -14,6 +14,25 @@ const withContext = (err, req, context) => {
   return err;
 };
 
+// A legacy/manual seed row can hold an empty or malformed password_hash;
+// bcrypt.compare then throws ("Illegal arguments", "Invalid salt version"),
+// which surfaced as a generic 500 INTERNAL_ERROR on valid-credential logins.
+const isBcryptHash = (v) => typeof v === 'string' && /^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$/.test(v);
+
+const safeCompare = async (password, hash, context) => {
+  if (!isBcryptHash(hash)) {
+    logger.error(`[${context}] account has missing/malformed password_hash — reset it (INSERT a bcrypt hash or reseed).`);
+    throw new AppError('ACCOUNT_CORRUPT',
+      'Account is misconfigured. Contact an administrator to reset the password.', 401);
+  }
+  try {
+    return await bcrypt.compare(password, hash);
+  } catch (err) {
+    logger.error(`[${context}] bcrypt.compare failed: ${err.message}`);
+    throw new AppError('INVALID_CREDENTIALS', 'Invalid credentials.', 401);
+  }
+};
+
 // ─── POST /api/auth/login  (employee) ────────────────────────
 const employeeLogin = async (req, res, next) => {
   try {
@@ -31,7 +50,7 @@ const employeeLogin = async (req, res, next) => {
       throw new AppError('INVALID_CREDENTIALS', 'Invalid credentials.', 401);
 
     const emp = result.rows[0];
-    const ok  = await bcrypt.compare(password, emp.password_hash);
+    const ok = await safeCompare(password, emp.password_hash, 'employeeLogin');
     if (!ok) throw new AppError('INVALID_CREDENTIALS', 'Invalid credentials.', 401);
 
 
@@ -61,7 +80,7 @@ const adminLogin = async (req, res, next) => {
       throw new AppError('INVALID_CREDENTIALS', 'Invalid credentials.', 401);
 
     const admin = result.rows[0];
-    if (!await bcrypt.compare(password, admin.password_hash))
+    if (!await safeCompare(password, admin.password_hash, 'adminLogin'))
       throw new AppError('INVALID_CREDENTIALS', 'Invalid credentials.', 401);
 
     // Audit update only — never block a successful login if the column is

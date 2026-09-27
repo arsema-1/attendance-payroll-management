@@ -1,4 +1,12 @@
 const { createLogger, format, transports } = require('winston');
+const fs = require('fs');
+
+// On ephemeral hosts (Render, Heroku) the repo is cloned fresh and logs/ is
+// gitignored, so the File transports would throw ENOENT on first write and
+// crash the process inside the error handler. Create the dir up front.
+if (process.env.NODE_ENV === 'production') {
+  fs.mkdirSync('logs', { recursive: true });
+}
 
 const logger = createLogger({
   level: process.env.NODE_ENV === 'production' ? 'info' : 'debug',

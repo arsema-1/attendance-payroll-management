@@ -18,6 +18,14 @@ const { logger }       = require('./utils/logger');
 
 const app = express();
 
+// ─── Reverse proxy ───────────────────────────────────────────
+// Render routes traffic through one reverse-proxy layer that sets
+// X-Forwarded-For. Without trust proxy, req.ip is the proxy IP, which (a)
+// trips express-rate-limit's proxy validations (plain Error → 500
+// INTERNAL_ERROR on every auth request) and (b) makes the per-IP auth
+// limiter global — 10 failed logins from anyone locks out all logins.
+app.set('trust proxy', 1);
+
 // ─── Security headers ─────────────────────────────────────────
 app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' },

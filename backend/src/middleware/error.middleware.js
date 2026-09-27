@@ -9,7 +9,15 @@ const errorHandler = (err, req, res, next) => {
       ...err.extra,
     });
   }
-  logger.error(`Unhandled: ${err.stack || err.message}`);
+  // Unhandled (non-operational) exception: log everything we know — the
+  // stack plus route, method and body shape — so Render's log tail shows
+  // the real root cause instead of a bare "INTERNAL_ERROR".
+  logger.error(
+    `Unhandled ${req.method} ${req.originalUrl}: ${err.stack || err.message}` +
+    (Object.keys(req.body || {}).length
+      ? ` | body keys: ${Object.keys(req.body).join(', ')}`
+      : '')
+  );
   // Surface the real reason in the response while debugging (also sent when
   // NODE_ENV is unset, which is common on fresh deployments).
   const isProd = process.env.NODE_ENV === 'production';
